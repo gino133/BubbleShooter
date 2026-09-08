@@ -13,11 +13,12 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
     private val paint = Paint()
     private val bubbles = mutableListOf<Bubble>()
     private var currentBubble: Bubble? = null
-    private var aimAngle = 270f // 0 = phải, 90 = xuống, 180 = trái, 270 = lên
+    private var aimAngle = 270f
     private var score = 0
     private var gameRunning = false
     private val handler = Handler(Looper.getMainLooper())
     private var updateRunnable: Runnable? = null
+    private var isShooting = false
     
     companion object {
         private const val ROWS = 8
@@ -39,9 +40,6 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
         startGame()
     }
     
-    /**
-     * Khởi tạo bong bóng ban đầu
-     */
     private fun initBubbles() {
         bubbles.clear()
         val startX = BUBBLE_RADIUS + 10
@@ -50,7 +48,6 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
         for (row in 0 until ROWS) {
             val offsetX = if (row % 2 == 0) 0f else BUBBLE_RADIUS
             for (col in 0 until COLS) {
-                // Tạo hình tam giác bong bóng
                 if (row < 4 || (row < 6 && col % 2 == 0)) {
                     val color = COLORS.random()
                     val x = startX + col * (BUBBLE_RADIUS * 2) + offsetX
@@ -61,9 +58,6 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
         }
     }
     
-    /**
-     * Tạo bong bóng hiện tại để bắn
-     */
     private fun createCurrentBubble() {
         currentBubble = Bubble(
             screenWidth / 2f,
@@ -71,12 +65,13 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
             BUBBLE_RADIUS,
             COLORS.random()
         )
+        isShooting = false
     }
     
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         
-        // Vẽ nền gradient
+        // Background gradient
         val gradient = LinearGradient(
             0f, 0f, 0f, screenHeight.toFloat(),
             Color.rgb(10, 20, 50), Color.rgb(30, 10, 40),
@@ -86,43 +81,43 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
         canvas.drawRect(0f, 0f, screenWidth.toFloat(), screenHeight.toFloat(), paint)
         paint.shader = null
         
-        // Vẽ đường kẻ
+        // Draw grid line
         paint.color = Color.argb(50, 255, 255, 255)
         paint.strokeWidth = 2f
         canvas.drawLine(0f, screenHeight - 100f, screenWidth.toFloat(), screenHeight - 100f, paint)
         
-        // Vẽ tất cả bong bóng
+        // Draw all bubbles
         for (bubble in bubbles) {
             bubble.draw(canvas, paint)
         }
         
-        // Vẽ bong bóng đang bắn và đường ngắm
-        if (currentBubble != null && gameRunning) {
-            // Đường ngắm
+        // Draw current bubble and aim line
+        if (currentBubble != null && gameRunning && !isShooting) {
+            // Aim line
             paint.color = Color.argb(100, 255, 255, 255)
             paint.strokeWidth = 3f
             val endX = currentBubble!!.x + cos(Math.toRadians(aimAngle.toDouble())).toFloat() * 500
             val endY = currentBubble!!.y + sin(Math.toRadians(aimAngle.toDouble())).toFloat() * 500
             canvas.drawLine(currentBubble!!.x, currentBubble!!.y, endX, endY, paint)
             
-            // Bong bóng hiện tại
+            // Current bubble
             currentBubble!!.draw(canvas, paint)
         }
         
-        // Hiển thị điểm
+        // Score
         paint.color = Color.WHITE
         paint.textSize = 40f
         paint.textAlign = Paint.Align.LEFT
         paint.style = Paint.Style.FILL
         canvas.drawText("Score: $score", 20f, 50f, paint)
         
-        // Hướng dẫn
+        // Instruction
         paint.textSize = 20f
         paint.textAlign = Paint.Align.CENTER
         canvas.drawText("Tap and drag to aim, release to shoot", screenWidth / 2f, screenHeight - 40f, paint)
         
-        // Màn hình Game Over
-        if (!gameRunning && bubbles.isNotEmpty()) {
+        // Game Over
+        if (!gameRunning) {
             paint.color = Color.WHITE
             paint.textSize = 50f
             paint.textAlign = Paint.Align.CENTER
@@ -131,19 +126,6 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
             canvas.drawText("Score: $score", screenWidth / 2f, screenHeight / 2f + 30f, paint)
             paint.textSize = 25f
             canvas.drawText("Tap to restart", screenWidth / 2f, screenHeight / 2f + 100f, paint)
-        }
-        
-        // Màn hình chiến thắng
-        if (!gameRunning && bubbles.isEmpty()) {
-            paint.color = Color.YELLOW
-            paint.textSize = 50f
-            paint.textAlign = Paint.Align.CENTER
-            canvas.drawText("🎉 You Win! 🎉", screenWidth / 2f, screenHeight / 2f - 50f, paint)
-            paint.color = Color.WHITE
-            paint.textSize = 30f
-            canvas.drawText("Score: $score", screenWidth / 2f, screenHeight / 2f + 30f, paint)
-            paint.textSize = 25f
-            canvas.drawText("Tap to play again", screenWidth / 2f, screenHeight / 2f + 100f, paint)
         }
     }
     
@@ -155,17 +137,19 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
             return true
         }
         
+        if (isShooting) return true
+        
         when (event.action) {
             MotionEvent.ACTION_MOVE -> {
-                // Điều chỉnh góc bắn
-                val dx = event.x - currentBubble!!.x
-                val dy = event.y - currentBubble!!.y
-                aimAngle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
-                // Giới hạn góc (chỉ bắn lên trên)
-                if (aimAngle > 270 || aimAngle < 180) {
-                    aimAngle = min(270f, max(180f, aimAngle))
+                currentBubble?.let { bubble ->
+                    val dx = event.x - bubble.x
+                    val dy = event.y - bubble.y
+                    aimAngle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                    if (aimAngle > 270 || aimAngle < 180) {
+                        aimAngle = min(270f, max(180f, aimAngle))
+                    }
+                    invalidate()
                 }
-                invalidate()
             }
             MotionEvent.ACTION_UP -> {
                 shootBubble()
@@ -174,75 +158,84 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
         return true
     }
     
-    /**
-     * Bắn bong bóng
-     */
     private fun shootBubble() {
         currentBubble?.let { bubble ->
+            isShooting = true
             bubble.isMoving = true
             val speed = 20f
             bubble.velocityX = cos(Math.toRadians(aimAngle.toDouble())).toFloat() * speed
             bubble.velocityY = sin(Math.toRadians(aimAngle.toDouble())).toFloat() * speed
             bubbles.add(bubble)
-            checkCollision(bubble)
+            
+            // Start checking collision
+            handler.postDelayed({
+                checkCollision(bubble)
+            }, 50)
         }
         createCurrentBubble()
         invalidate()
     }
     
-    /**
-     * Kiểm tra va chạm
-     */
     private fun checkCollision(bubble: Bubble) {
-        handler.postDelayed({
-            if (!bubble.isMoving) return@postDelayed
+        if (!bubble.isMoving) {
+            isShooting = false
+            return
+        }
+        
+        // Check collision with other bubbles
+        for (other in bubbles) {
+            if (other == bubble) continue
+            val dx = bubble.x - other.x
+            val dy = bubble.y - other.y
+            val distance = sqrt(dx*dx + dy*dy)
             
-            // Kiểm tra va chạm với bong bóng khác
-            for (other in bubbles) {
-                if (other == bubble) continue
-                val dx = bubble.x - other.x
-                val dy = bubble.y - other.y
-                val distance = sqrt(dx*dx + dy*dy)
-                
-                if (distance < BUBBLE_RADIUS * 2) {
-                    bubble.isMoving = false
-                    // Dính vào bong bóng
-                    bubble.x = other.x + dx / distance * BUBBLE_RADIUS * 2
-                    bubble.y = other.y + dy / distance * BUBBLE_RADIUS * 2
-                    removeBubbles(bubble)
-                    return@postDelayed
-                }
-            }
-            
-            // Kiểm tra va chạm với tường (trái/phải)
-            if (bubble.x - BUBBLE_RADIUS < 0) {
-                bubble.x = BUBBLE_RADIUS
-                bubble.velocityX = -bubble.velocityX
-            } else if (bubble.x + BUBBLE_RADIUS > screenWidth) {
-                bubble.x = screenWidth - BUBBLE_RADIUS
-                bubble.velocityX = -bubble.velocityX
-            }
-            
-            // Kiểm tra va chạm với đỉnh
-            if (bubble.y - BUBBLE_RADIUS < 0) {
-                bubble.y = BUBBLE_RADIUS
+            if (distance < BUBBLE_RADIUS * 2) {
+                // Stick to the other bubble
                 bubble.isMoving = false
+                bubble.x = other.x + dx / distance * BUBBLE_RADIUS * 2
+                bubble.y = other.y + dy / distance * BUBBLE_RADIUS * 2
+                isShooting = false
                 removeBubbles(bubble)
+                invalidate()
+                return
             }
-            
-            // Game Over nếu chạm đáy
-            if (bubble.y + BUBBLE_RADIUS > screenHeight - 150) {
-                gameOver()
-            }
-            
+        }
+        
+        // Check wall collision
+        if (bubble.x - BUBBLE_RADIUS < 0) {
+            bubble.x = BUBBLE_RADIUS
+            bubble.velocityX = abs(bubble.velocityX)
+        } else if (bubble.x + BUBBLE_RADIUS > screenWidth) {
+            bubble.x = screenWidth - BUBBLE_RADIUS
+            bubble.velocityX = -abs(bubble.velocityX)
+        }
+        
+        // Check top collision
+        if (bubble.y - BUBBLE_RADIUS < 0) {
+            bubble.y = BUBBLE_RADIUS
+            bubble.isMoving = false
+            isShooting = false
+            removeBubbles(bubble)
             invalidate()
+            return
+        }
+        
+        // Check bottom (Game Over)
+        if (bubble.y + BUBBLE_RADIUS > screenHeight - 150) {
+            bubble.isMoving = false
+            isShooting = false
+            gameOver()
+            invalidate()
+            return
+        }
+        
+        // Continue checking
+        invalidate()
+        handler.postDelayed({
             checkCollision(bubble)
-        }, 50)
+        }, 30)
     }
     
-    /**
-     * Xóa các bong bóng cùng màu
-     */
     private fun removeBubbles(bubble: Bubble) {
         val sameColor = mutableListOf<Bubble>()
         findSameColor(bubble, sameColor)
@@ -252,16 +245,13 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
             score += sameColor.size * 10
         }
         
-        // Kiểm tra chiến thắng
+        // Check win
         if (bubbles.isEmpty()) {
             gameRunning = false
             invalidate()
         }
     }
     
-    /**
-     * Tìm bong bóng cùng màu (đệ quy)
-     */
     private fun findSameColor(bubble: Bubble, result: MutableList<Bubble>) {
         if (bubble in result) return
         result.add(bubble)
@@ -281,14 +271,12 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
         return sqrt(dx*dx + dy*dy)
     }
     
-    /**
-     * Bắt đầu game
-     */
     private fun startGame() {
         initBubbles()
         createCurrentBubble()
         gameRunning = true
         score = 0
+        isShooting = false
         
         updateRunnable = object : Runnable {
             override fun run() {
@@ -299,17 +287,15 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
         handler.post(updateRunnable!!)
     }
     
-    /**
-     * Cập nhật game loop
-     */
     private fun updateGame() {
         if (!gameRunning) return
         
+        // Update bubbles
         for (bubble in bubbles) {
             bubble.update()
         }
         
-        // Xóa bong bóng ra khỏi màn hình
+        // Remove bubbles out of screen
         val iterator = bubbles.iterator()
         while (iterator.hasNext()) {
             val bubble = iterator.next()
@@ -323,6 +309,7 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
     
     private fun gameOver() {
         gameRunning = false
+        isShooting = false
         invalidate()
     }
     
@@ -331,6 +318,7 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
         createCurrentBubble()
         gameRunning = true
         score = 0
+        isShooting = false
         invalidate()
     }
 }
