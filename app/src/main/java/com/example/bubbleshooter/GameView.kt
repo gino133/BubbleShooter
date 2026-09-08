@@ -16,13 +16,11 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
     private var aimAngle = 270f
     private var score = 0
     private var gameRunning = false
+    private var gameOver = false
     private val handler = Handler(Looper.getMainLooper())
-    private var updateRunnable: Runnable? = null
-    private var isShooting = false
+    private var isMoving = false
     
     companion object {
-        private const val ROWS = 8
-        private const val COLS = 8
         private const val BUBBLE_RADIUS = 40f
         private val COLORS = intArrayOf(
             Color.RED, Color.BLUE, Color.GREEN, 
@@ -45,9 +43,9 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
         val startX = BUBBLE_RADIUS + 10
         val startY = BUBBLE_RADIUS + 50
         
-        for (row in 0 until ROWS) {
+        for (row in 0..6) {
             val offsetX = if (row % 2 == 0) 0f else BUBBLE_RADIUS
-            for (col in 0 until COLS) {
+            for (col in 0..7) {
                 if (row < 4 || (row < 6 && col % 2 == 0)) {
                     val color = COLORS.random()
                     val x = startX + col * (BUBBLE_RADIUS * 2) + offsetX
@@ -59,48 +57,39 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
     }
     
     private fun createCurrentBubble() {
+        if (!gameRunning || gameOver) return
         currentBubble = Bubble(
-            screenWidth / 2f,
-            screenHeight - 150f,
+            (screenWidth / 2).toFloat(),
+            (screenHeight - 150).toFloat(),
             BUBBLE_RADIUS,
             COLORS.random()
         )
-        isShooting = false
+        isMoving = false
     }
     
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         
-        // Background gradient
-        val gradient = LinearGradient(
-            0f, 0f, 0f, screenHeight.toFloat(),
-            Color.rgb(10, 20, 50), Color.rgb(30, 10, 40),
-            Shader.TileMode.CLAMP
-        )
-        paint.shader = gradient
-        canvas.drawRect(0f, 0f, screenWidth.toFloat(), screenHeight.toFloat(), paint)
-        paint.shader = null
-        
-        // Draw grid line
-        paint.color = Color.argb(50, 255, 255, 255)
-        paint.strokeWidth = 2f
-        canvas.drawLine(0f, screenHeight - 100f, screenWidth.toFloat(), screenHeight - 100f, paint)
+        // Background
+        canvas.drawColor(Color.rgb(20, 20, 40))
         
         // Draw all bubbles
         for (bubble in bubbles) {
             bubble.draw(canvas, paint)
         }
         
-        // Draw current bubble and aim line
-        if (currentBubble != null && gameRunning && !isShooting) {
+        // Draw current bubble
+        if (currentBubble != null && gameRunning && !gameOver) {
             // Aim line
-            paint.color = Color.argb(100, 255, 255, 255)
-            paint.strokeWidth = 3f
-            val endX = currentBubble!!.x + cos(Math.toRadians(aimAngle.toDouble())).toFloat() * 500
-            val endY = currentBubble!!.y + sin(Math.toRadians(aimAngle.toDouble())).toFloat() * 500
-            canvas.drawLine(currentBubble!!.x, currentBubble!!.y, endX, endY, paint)
+            if (!isMoving) {
+                paint.color = Color.argb(100, 255, 255, 255)
+                paint.strokeWidth = 3f
+                val endX = currentBubble!!.x + cos(Math.toRadians(aimAngle.toDouble())).toFloat() * 500
+                val endY = currentBubble!!.y + sin(Math.toRadians(aimAngle.toDouble())).toFloat() * 500
+                canvas.drawLine(currentBubble!!.x, currentBubble!!.y, endX, endY, paint)
+            }
             
-            // Current bubble
+            // Draw current bubble
             currentBubble!!.draw(canvas, paint)
         }
         
@@ -111,13 +100,15 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
         paint.style = Paint.Style.FILL
         canvas.drawText("Score: $score", 20f, 50f, paint)
         
-        // Instruction
-        paint.textSize = 20f
-        paint.textAlign = Paint.Align.CENTER
-        canvas.drawText("Tap and drag to aim, release to shoot", screenWidth / 2f, screenHeight - 40f, paint)
+        // Instructions
+        if (gameRunning && !gameOver) {
+            paint.textSize = 20f
+            paint.textAlign = Paint.Align.CENTER
+            canvas.drawText("Drag to aim, release to shoot", screenWidth / 2f, screenHeight - 40f, paint)
+        }
         
         // Game Over
-        if (!gameRunning) {
+        if (gameOver) {
             paint.color = Color.WHITE
             paint.textSize = 50f
             paint.textAlign = Paint.Align.CENTER
@@ -130,14 +121,19 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
     }
     
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (!gameRunning) {
+        if (gameOver) {
             if (event.action == MotionEvent.ACTION_DOWN) {
                 restartGame()
             }
             return true
         }
         
-        if (isShooting) return true
+        if (!gameRunning) {
+            startGame()
+            return true
+        }
+        
+        if (isMoving) return true
         
         when (event.action) {
             MotionEvent.ACTION_MOVE -> {
@@ -145,6 +141,7 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
                     val dx = event.x - bubble.x
                     val dy = event.y - bubble.y
                     aimAngle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                    // Chỉ bắn lên (180-270 độ)
                     if (aimAngle > 270 || aimAngle < 180) {
                         aimAngle = min(270f, max(180f, aimAngle))
                     }
@@ -159,100 +156,115 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
     }
     
     private fun shootBubble() {
-        currentBubble?.let { bubble ->
-            isShooting = true
-            bubble.isMoving = true
-            val speed = 20f
-            bubble.velocityX = cos(Math.toRadians(aimAngle.toDouble())).toFloat() * speed
-            bubble.velocityY = sin(Math.toRadians(aimAngle.toDouble())).toFloat() * speed
-            bubbles.add(bubble)
-            
-            // Start checking collision
-            handler.postDelayed({
-                checkCollision(bubble)
-            }, 50)
-        }
+        val bubble = currentBubble ?: return
+        if (isMoving) return
+        
+        isMoving = true
+        val speed = 25f
+        bubble.velocityX = cos(Math.toRadians(aimAngle.toDouble())).toFloat() * speed
+        bubble.velocityY = sin(Math.toRadians(aimAngle.toDouble())).toFloat() * speed
+        bubble.isMoving = true
+        bubbles.add(bubble)
+        currentBubble = null
+        
+        // Check collision after each frame
+        handler.postDelayed({
+            updateBubbleMovement()
+        }, 20)
+        
         createCurrentBubble()
         invalidate()
     }
     
-    private fun checkCollision(bubble: Bubble) {
-        if (!bubble.isMoving) {
-            isShooting = false
+    private fun updateBubbleMovement() {
+        if (!gameRunning || gameOver) return
+        
+        val bubble = bubbles.lastOrNull { it.isMoving }
+        if (bubble == null) {
+            isMoving = false
             return
         }
         
-        // Check collision with other bubbles
-        for (other in bubbles) {
-            if (other == bubble) continue
-            val dx = bubble.x - other.x
-            val dy = bubble.y - other.y
-            val distance = sqrt(dx*dx + dy*dy)
-            
-            if (distance < BUBBLE_RADIUS * 2) {
-                // Stick to the other bubble
-                bubble.isMoving = false
-                bubble.x = other.x + dx / distance * BUBBLE_RADIUS * 2
-                bubble.y = other.y + dy / distance * BUBBLE_RADIUS * 2
-                isShooting = false
-                removeBubbles(bubble)
-                invalidate()
-                return
-            }
-        }
+        // Update position
+        bubble.x += bubble.velocityX
+        bubble.y += bubble.velocityY
         
         // Check wall collision
         if (bubble.x - BUBBLE_RADIUS < 0) {
             bubble.x = BUBBLE_RADIUS
-            bubble.velocityX = abs(bubble.velocityX)
+            bubble.velocityX = -bubble.velocityX
         } else if (bubble.x + BUBBLE_RADIUS > screenWidth) {
             bubble.x = screenWidth - BUBBLE_RADIUS
-            bubble.velocityX = -abs(bubble.velocityX)
+            bubble.velocityX = -bubble.velocityX
         }
         
         // Check top collision
         if (bubble.y - BUBBLE_RADIUS < 0) {
             bubble.y = BUBBLE_RADIUS
             bubble.isMoving = false
-            isShooting = false
-            removeBubbles(bubble)
+            isMoving = false
+            checkMatch(bubble)
             invalidate()
             return
         }
         
+        // Check collision with other bubbles
+        for (other in bubbles) {
+            if (other == bubble || !other.isMoving) continue
+            val dx = bubble.x - other.x
+            val dy = bubble.y - other.y
+            val dist = sqrt(dx*dx + dy*dy)
+            
+            if (dist < BUBBLE_RADIUS * 2) {
+                // Stick to the bubble
+                bubble.x = other.x + dx / dist * BUBBLE_RADIUS * 2
+                bubble.y = other.y + dy / dist * BUBBLE_RADIUS * 2
+                bubble.isMoving = false
+                isMoving = false
+                checkMatch(bubble)
+                invalidate()
+                return
+            }
+        }
+        
         // Check bottom (Game Over)
-        if (bubble.y + BUBBLE_RADIUS > screenHeight - 150) {
+        if (bubble.y + BUBBLE_RADIUS > screenHeight - 100) {
             bubble.isMoving = false
-            isShooting = false
+            isMoving = false
             gameOver()
             invalidate()
             return
         }
         
-        // Continue checking
         invalidate()
         handler.postDelayed({
-            checkCollision(bubble)
-        }, 30)
+            updateBubbleMovement()
+        }, 20)
     }
     
-    private fun removeBubbles(bubble: Bubble) {
-        val sameColor = mutableListOf<Bubble>()
-        findSameColor(bubble, sameColor)
+    private fun checkMatch(bubble: Bubble) {
+        val matched = mutableListOf<Bubble>()
+        findMatches(bubble, matched)
         
-        if (sameColor.size >= 3) {
-            bubbles.removeAll(sameColor)
-            score += sameColor.size * 10
+        if (matched.size >= 3) {
+            bubbles.removeAll(matched)
+            score += matched.size * 10
+            
+            // Check win
+            if (bubbles.isEmpty()) {
+                gameOver = true
+                gameRunning = false
+                invalidate()
+                return
+            }
         }
         
-        // Check win
-        if (bubbles.isEmpty()) {
-            gameRunning = false
-            invalidate()
-        }
+        // Check for floating bubbles
+        checkFloatingBubbles()
+        invalidate()
     }
     
-    private fun findSameColor(bubble: Bubble, result: MutableList<Bubble>) {
+    private fun findMatches(bubble: Bubble, result: MutableList<Bubble>) {
         if (bubble in result) return
         result.add(bubble)
         
@@ -260,7 +272,44 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
             if (other in result) continue
             if (other.color == bubble.color && 
                 distance(bubble.x, bubble.y, other.x, other.y) < BUBBLE_RADIUS * 2.5) {
-                findSameColor(other, result)
+                findMatches(other, result)
+            }
+        }
+    }
+    
+    private fun checkFloatingBubbles() {
+        val connected = mutableSetOf<Bubble>()
+        // Find all bubbles connected to top row
+        for (bubble in bubbles) {
+            if (bubble.y < 150) {
+                findConnected(bubble, connected)
+            }
+        }
+        
+        // Remove floating bubbles
+        val toRemove = mutableListOf<Bubble>()
+        for (bubble in bubbles) {
+            if (bubble !in connected) {
+                toRemove.add(bubble)
+                score += 5
+            }
+        }
+        bubbles.removeAll(toRemove)
+        
+        if (bubbles.isEmpty()) {
+            gameOver = true
+            gameRunning = false
+        }
+    }
+    
+    private fun findConnected(bubble: Bubble, result: MutableSet<Bubble>) {
+        if (bubble in result) return
+        result.add(bubble)
+        
+        for (other in bubbles) {
+            if (other in result) continue
+            if (distance(bubble.x, bubble.y, other.x, other.y) < BUBBLE_RADIUS * 2.5) {
+                findConnected(other, result)
             }
         }
     }
@@ -275,50 +324,20 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
         initBubbles()
         createCurrentBubble()
         gameRunning = true
+        gameOver = false
         score = 0
-        isShooting = false
-        
-        updateRunnable = object : Runnable {
-            override fun run() {
-                updateGame()
-                handler.postDelayed(this, 30)
-            }
-        }
-        handler.post(updateRunnable!!)
-    }
-    
-    private fun updateGame() {
-        if (!gameRunning) return
-        
-        // Update bubbles
-        for (bubble in bubbles) {
-            bubble.update()
-        }
-        
-        // Remove bubbles out of screen
-        val iterator = bubbles.iterator()
-        while (iterator.hasNext()) {
-            val bubble = iterator.next()
-            if (bubble.isOutOfScreen(screenHeight)) {
-                iterator.remove()
-            }
-        }
-        
+        isMoving = false
         invalidate()
     }
     
     private fun gameOver() {
         gameRunning = false
-        isShooting = false
+        gameOver = true
+        isMoving = false
         invalidate()
     }
     
     private fun restartGame() {
-        initBubbles()
-        createCurrentBubble()
-        gameRunning = true
-        score = 0
-        isShooting = false
-        invalidate()
+        startGame()
     }
 }
